@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
 #include "Types.h"
 #include "errExit.h"
 
@@ -32,35 +33,30 @@ int main(int argc, char *argv[]) {
   // datasetFile: file containing the dataset
   char *datasetFile = argv[4];
 
-  printf("K = %i \t N = %i \t Key = %i \n",K, N, key_ipc);
+  printf("K = %i \t N = %i \t Key = %i \n", K, N, key_ipc);
   // open dataset file
-  int fp = open(datasetFile, O_RDONLY);
-  if (!fp) {
+  FILE *fp = fopen(datasetFile, "r");
+  if (fp == NULL) {
     errExit("Error opening dataset file");
     return 1;
-  } else {
-    printf("apertura file riuscita!\n");
-  }
+  } 
 
   // count number of lines in dataset file
   int lines = 0;
-  char* c;
+  char c;
 
-  int r = read(fp, c, sizeof(char));
-
-  while (r != -1) {
-    if (&c == '\n') {
+  while ((c = fgetc(fp)) != EOF) {
+    if (c == '\n') {
       lines++;
-    };
+    }
+  }
 
-    r = read(fp, c, sizeof(char));
-  };
   printf("Lette tutte le righe!\n");
 
   // rewind file pointer to beginning of file
   fseek(fp, 0, SEEK_SET);
 
-  printf("lines = %i", lines);
+  printf("lines = %i\n", lines);
 
   // can't have more clusters than points
   if (lines < K) {
@@ -74,8 +70,6 @@ int main(int argc, char *argv[]) {
   if (shm_id == -1) {
     errExit("Error creating shared memory segment");
     return 1;
-  } else {
-    printf("Semget riuscita\n");
   }
 
   // Attach to shared memory segment
@@ -88,9 +82,8 @@ int main(int argc, char *argv[]) {
   int i = 0;
   char line[100];
 
-  r = read(fp, line, 100);
-
-  while (r != -1) {
+  // read each line of the file
+  while (fgets(line, 100, fp)) {
     char *token = strtok(line, ",");
     // convert the string to double
     points[i].x = atof(token);
@@ -98,15 +91,19 @@ int main(int argc, char *argv[]) {
     points[i].y = atof(token);
     i++;
   }
-  close(fp);
+  fclose(fp);
 
-  
+  // debug
+  // print the points
+  for (int i = 0; i < lines; i++) {
+    printf("%f, %f\n", points[i].x, points[i].y);
+  }
 
   // create message queue
-  int msg_queue = msgget(key_ipc, S_IRUSR | S_IWUSR);
+  int msg_queue = msgget(key_ipc, IPC_CREAT | S_IRUSR | S_IWUSR);
 
   if (msg_queue == -1) {
-    errExit("Error creating message queue");
+    errExit("master: Error creating message queue");
     return 1;
   };
   // to store the pids of the worker processes
@@ -118,7 +115,6 @@ int main(int argc, char *argv[]) {
     if (pids[i] == -1) {
       errExit("Error creating child process");
     } else if (pids[i] == 0) {
-      
       char Kstr[10];
       char keystr[10];
       char linesstr[100];
@@ -133,14 +129,10 @@ int main(int argc, char *argv[]) {
     };
   };
 
-
-  
   int noImprov = 0;
 
   // keep receiving messages from workers
   while (1) {
-    
-
     if (noImprov == MAX_NO_IMPROVEMENT) {
       // dump to file
       int fp = open("centroids.csv", O_WRONLY);
@@ -158,28 +150,25 @@ int main(int argc, char *argv[]) {
     };
   };
 
-
   // gather exit status of all worker processes
   for (int i = 0; i < N; i++) {
     wait(NULL);
   };
 
-// Detach from shared memory segment
-shmdt(points);
+  // Detach from shared memory segment
+  shmdt(points);
 
-// Deallocate shared memory segment
-if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
+  // Deallocate shared memory segment
+  if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
     errExit("Error deallocating shared memory segment");
     return 1;
-}
+  }
 
-// Deallocate message queue
-if (msgctl(msg_queue, IPC_RMID, NULL) == -1) {
+  // Deallocate message queue
+  if (msgctl(msg_queue, IPC_RMID, NULL) == -1) {
     errExit("Error deallocating message queue");
     return 1;
-}
-
-
+  }
 
   return 0;
 };
