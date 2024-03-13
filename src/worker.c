@@ -53,33 +53,39 @@ int main(int argc, char *argv[]) {
   printf("Worker %d running...\n", getpid());
 
   // Get parameters from command line
-  key_t shm_id = atoi(argv[1]);
+  key_t key_ipc = atoi(argv[1]);
   int K = atoi(argv[2]);
   int nPoints = atoi(argv[3]);
 
-  printf("%i \t %i \t %d", shm_id, K, nPoints);
+  printf("Key = %i \t %i \t %d\n", key_ipc, K, nPoints);
   
   int cluster[nPoints];
   // Get shared memory ID
-  // int shmid = shmget(ipc_key, nPoints * sizeof(Point), SHM_RDONLY);
-  // if (shmid == -1) {
-  //   errExit("shmget");
-  //   return 1;
-  // }
+  //int shmid = shmget(key_ipc, nPoints * sizeof(Point), SHM_RDONLY);
+  //if (shmid == -1) {
+    // errExit("shmget");
+    //return 1;
+   //}
 
   printf("Semget riuscita\n");
+
+  int shm_id =
+      shmget(key_ipc, sizeof(Point) * nPoints, IPC_CREAT | S_IRUSR | S_IWUSR);
 
   // Attach to shared memory
   Point *points = (Point *)shmat(shm_id, NULL, 0);
   if (points == (Point *)-1) {
-    errExit("shmat");
+    errExit("Worker: error shmat");
     return 1;
   }
+  printf("attach riuscita \n");
 
   // Get master's message queue ID
-  int msgid = msgget(shm_id, S_IWUSR);
+  int msgid = msgget(key_ipc, S_IRUSR | S_IWUSR);
   if (msgid == -1) {
-    errExit("Error getting message queue ID");
+    errExit("work: error getting message queue ID");
+  }else{
+    printf("presa la coda dei messaggi id = %i\n", msgid);
   }
 
   while (1) {
@@ -91,6 +97,8 @@ int main(int argc, char *argv[]) {
       centroids[i].point = points[random_index];
       centroids[i].cluster_id = i;
     }
+
+    printf("Inizializzazione centroidi fatta!\n");
 
     Centroid prev_centroids[K];
     while (1) {
@@ -112,6 +120,8 @@ int main(int argc, char *argv[]) {
           cluster[i] = closest_cluster;
         }
 
+        printf("Assegnamento dei punti al cluster\n");
+
         // Calculate the new centroids
         for (int i = 0; i < K; i++) {
           Point cluster_points[nPoints];
@@ -125,6 +135,8 @@ int main(int argc, char *argv[]) {
           update_centroid(&centroids[i], cluster_points, num_points);
         }
 
+        printf("Centroide calcolato\n");
+
         // Calculate the difference between new and previous centroids
         double centroid_diff = 0.0;
         for (int i = 0; i < K; i++) {
@@ -132,6 +144,8 @@ int main(int argc, char *argv[]) {
               euclidean_distance(centroids[i].point, prev_centroids[i].point);
           centroid_diff += d;
         }
+
+        printf("Calcolata variazione\n");
 
         // Check for convergence
         if (centroid_diff < convergence_threshold) {
@@ -143,34 +157,45 @@ int main(int argc, char *argv[]) {
           prev_centroids[i] = centroids[i];
         }
 
+        printf("Aggiorna il centroide nel caso di variazioni\n");
+
       } 
 
+      break;
+
     }  
+
+    printf("Test\n");
 
     double variance = calculateVariance(points, centroids, cluster, nPoints);
 
     // Create message
-    Message msg;
-    msg.variance = variance;
+    struct message mess;
+    mess.mtype = 1;
+    mess.variance = variance;
     for (int i = 0; i < K; i++) {
-      msg.centroids[i].point.x = centroids->point.x;
-      msg.centroids[i].point.y = centroids->point.y;
-      msg.centroids[i].cluster_id = centroids->cluster_id;
+      mess.centroids[i].point.x = centroids->point.x;
+      mess.centroids[i].point.y = centroids->point.y;
+      mess.centroids[i].cluster_id = centroids->cluster_id;
     }
+
+    printf("msgid = %i\n", msgid);
+
+    printf("Message size = %li\n", sizeof(struct message));
+
+    size_t mSize = sizeof(struct message) - sizeof(long);
+
+    printf("mSize = %li\n", mSize);
 
     // Send message to queue
-    if (msgsnd(msgid, &msg, sizeof(Message), 0) == -1) {
-      errExit("msgsnd");
+    if (msgsnd(msgid, &mess, mSize, 0) == -1) {
+      errExit("work: msgsnd");
       return 1;
     }
-
+printf("Messsagio iniviato\n");
   }  // while
 
-shmdt(points);
-
-
-
-  
+  shmdt(points);  
 
   return 0;
 }

@@ -43,14 +43,15 @@ int main(int argc, char *argv[]) {
 
   // count number of lines in dataset file
   int lines = 0;
-  char c;
+  int c;
 
   while ((c = fgetc(fp)) != EOF) {
     if (c == '\n') {
       lines++;
+      printf("lines ++\n");
     }
   }
-
+  fclose(fp);
   printf("Lette tutte le righe!\n");
 
   // rewind file pointer to beginning of file
@@ -67,9 +68,14 @@ int main(int argc, char *argv[]) {
   int shm_id =
       shmget(key_ipc, sizeof(Point) * lines, IPC_CREAT | S_IRUSR | S_IWUSR);
 
+      printf("Mem \n");
+
   if (shm_id == -1) {
     errExit("Error creating shared memory segment");
     return 1;
+  }else{
+
+    printf("Memoria creata\n");
   }
 
   // Attach to shared memory segment
@@ -105,9 +111,19 @@ int main(int argc, char *argv[]) {
   if (msg_queue == -1) {
     errExit("master: Error creating message queue");
     return 1;
-  };
+  } else {
+    printf("master: message queue creata id = %i!\n", msg_queue);
+  }
   // to store the pids of the worker processes
   pid_t pids[N];
+
+  char Kstr[10];
+  char linesstr[100];
+
+  sprintf(Kstr, "%d", K);
+  sprintf(linesstr, "%d", lines);
+
+  printf("Master: key = %i\n", key_ipc);
 
   // Generate N child processes called "worker"
   for (int i = 0; i < N; i++) {
@@ -115,14 +131,7 @@ int main(int argc, char *argv[]) {
     if (pids[i] == -1) {
       errExit("Error creating child process");
     } else if (pids[i] == 0) {
-      char Kstr[10];
-      char keystr[10];
-      char linesstr[100];
-      printf("%s \t %d \t %s\n", Kstr, shm_id, linesstr);
-      sprintf(Kstr, "%d", K);
-      sprintf(keystr, "%d", shm_id);
-      sprintf(linesstr, "%d", lines);
-      if (execl("worker", "worker", keystr, Kstr, linesstr, (char *)NULL) ==
+      if (execl("worker", "worker", argv[3], Kstr, linesstr, (char *)NULL) ==
           -1) {
         errExit("execl failed");
       };

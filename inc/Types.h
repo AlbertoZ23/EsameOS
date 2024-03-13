@@ -11,10 +11,11 @@ typedef struct {
   int cluster_id;
 } Centroid;
 
-#define MAX 10000
+#define MAX 100
 
 // Definizione della struttura per il messaggio
-typedef struct {
+struct message {
+  long mtype;
   double variance;
   Centroid centroids[MAX];
-} Message;
+};
