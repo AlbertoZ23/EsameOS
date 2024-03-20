@@ -11,7 +11,7 @@ typedef struct {
   int cluster_id;
 } Centroid;
 
-#define MAX 100
+#define MAX 50
 
 // Definizione della struttura per il messaggio
 struct message {

@@ -15,6 +15,11 @@
 #include "errExit.h"
 
 #define MAX_NO_IMPROVEMENT 1000
+#define MAX_READ 1000
+
+void print_message(struct message mess);
+
+void read_point(Point *points, int fd, int npoints);
 
 int main(int argc, char *argv[]) {
   if (argc != 5) {
@@ -23,6 +28,9 @@ int main(int argc, char *argv[]) {
   };
 
   printf("%s, %s, %s, %s\n", argv[1], argv[2], argv[3], argv[4]);
+
+  close(STDOUT_FILENO);
+  int fd_file_out = open("output.txt", O_WRONLY | O_TRUNC| O_CREAT, S_IRUSR | S_IWUSR);
 
   // K : number of clusters
   int K = atoi(argv[1]);
@@ -35,29 +43,35 @@ int main(int argc, char *argv[]) {
 
   printf("K = %i \t N = %i \t Key = %i \n", K, N, key_ipc);
   // open dataset file
-  FILE *fp = fopen(datasetFile, "r");
-  if (fp == NULL) {
+  int fp = open(datasetFile, O_RDONLY);
+  if (fp == -1) {
     errExit("Error opening dataset file");
     return 1;
   } 
 
   // count number of lines in dataset file
   int lines = 0;
-  int c;
+  char c;
 
-  while ((c = fgetc(fp)) != EOF) {
+  int checkread = 0;
+
+  do {
+    checkread = read(fp, &c, sizeof(char));
+
+    if (checkread == -1)
+      errExit("read");
+
     if (c == '\n') {
       lines++;
-      printf("lines ++\n");
+      printf("master: lines ++\n");
     }
-  }
-  fclose(fp);
-  printf("Lette tutte le righe!\n");
+  } while (checkread > 0);
+  printf("master: Lette tutte le righe!\n");
 
   // rewind file pointer to beginning of file
-  fseek(fp, 0, SEEK_SET);
+  lseek(fp, 0, SEEK_SET);
 
-  printf("lines = %i\n", lines);
+  printf("master: lines = %i\n", lines);
 
   // can't have more clusters than points
   if (lines < K) {
@@ -75,7 +89,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }else{
 
-    printf("Memoria creata\n");
+    printf("master: Memoria creata\n");
   }
 
   // Attach to shared memory segment
@@ -85,19 +99,22 @@ int main(int argc, char *argv[]) {
     return 1;
   };
 
-  int i = 0;
-  char line[100];
+  printf("worker: leggo i punti!\n");
+
+  read_point(points, fp, lines);
+
+  printf("worker: lettura punti terminata");
 
   // read each line of the file
-  while (fgets(line, 100, fp)) {
-    char *token = strtok(line, ",");
-    // convert the string to double
-    points[i].x = atof(token);
-    token = strtok(NULL, ",");
-    points[i].y = atof(token);
-    i++;
-  }
-  fclose(fp);
+  // while (fgets(line, 100, fp)) {
+  //   char *token = strtok(line, ",");
+  //   // convert the string to double
+  //   points[i].x = atof(token);
+  //   token = strtok(NULL, ",");
+  //   points[i].y = atof(token);
+  //   i++;
+  // }
+  close(fp);
 
   // debug
   // print the points
@@ -123,7 +140,10 @@ int main(int argc, char *argv[]) {
   sprintf(Kstr, "%d", K);
   sprintf(linesstr, "%d", lines);
 
-  printf("Master: key = %i\n", key_ipc);
+  printf("master: key = %i\n", key_ipc);
+
+
+  for (int noImprov = 0; noImprov < MAX_NO_IMPROVEMENT; noImprov++) {
 
   // Generate N child processes called "worker"
   for (int i = 0; i < N; i++) {
@@ -131,33 +151,49 @@ int main(int argc, char *argv[]) {
     if (pids[i] == -1) {
       errExit("Error creating child process");
     } else if (pids[i] == 0) {
-      if (execl("worker", "worker", argv[3], Kstr, linesstr, (char *)NULL) ==
-          -1) {
+      printf("master: Creazione figlio %i\n", i);
+      if (execl("worker", "worker", argv[3], Kstr, linesstr, (char *)NULL) == -1) {
         errExit("execl failed");
       };
     };
   };
 
-  int noImprov = 0;
+printf("master: chiusa la chiamata del work\n");
+
+  struct message mess;
+  size_t mSize = sizeof(struct message) - sizeof(long);
+
+  printf("\n\n\n");
 
   // keep receiving messages from workers
-  while (1) {
-    if (noImprov == MAX_NO_IMPROVEMENT) {
       // dump to file
-      int fp = open("centroids.csv", O_WRONLY);
-      if (fp == -1) {
-        errExit("fopen");
-      };
-      close(fp);
+      // int fp = open("centroids.csv", O_WRONLY);
+      // if (fp == -1) {
+      //   errExit("fopen");
+      // };
+
+      printf("master: lettura del messaggio!\n");
 
       // send SIGINT to all workers
       for (int i = 0; i < N; i++) {
-        kill(pids[i], SIGINT);
+        if (msgrcv(msg_queue, &mess, mSize, -2, 0) == -1) {
+          errExit("master: msgrcv");
+          return 1;
+        }
+
+        printf("master: Stampa del messaggio!\n");
+
+        // print_message(mess);
+
+        printf("master: ho letto il messaggio!\n");
+          kill(pids[i], SIGINT);
       };
+
+      printf("master: test\n");
       // break out of the loop
-      break;
-    };
   };
+  
+  printf("Master: finito di ricevere\n");
 
   // gather exit status of all worker processes
   for (int i = 0; i < N; i++) {
@@ -179,6 +215,39 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  close(fd_file_out);
+
   return 0;
 };
 
+void print_message(struct message mess)
+{
+//   long mtype;
+//   double variance;
+//   Centroid centroids[MAX];
+
+  printf("Message: \n");
+  printf("\tvariance: %f\n", mess.variance);
+  printf("\tCentroids: \n");
+  for (int i = 0; i < MAX; i++) {
+    printf("\t\t x: %f, y: %f\n", mess.centroids[i].point.x, mess.centroids[i].point.y);
+    printf("\t\t cluster_id : %i\n", mess.centroids[i].cluster_id);
+  }
+}
+
+void read_point(Point *points, int fd, int npoints)
+{
+  char buffer[MAX_READ];
+
+  ssize_t nread;
+
+  do {
+    nread = read(fd, buffer, MAX_READ);
+
+    if (nread == -1)
+      errExit("read");
+    
+    for (int i = 0; i < npoints; i++)
+      sscanf(buffer, "%lf,%lf\n", &points[i].x, &points[i].y);
+  } while (nread > 0);
+}
