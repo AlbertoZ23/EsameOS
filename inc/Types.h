@@ -14,8 +14,8 @@ typedef struct {
 #define MAX 50
 
 // Definizione della struttura per il messaggio
-struct message {
+typedef struct {
   long mtype;
   double variance;
   Centroid centroids[MAX];
-};
+}Message;

@@ -4,6 +4,7 @@ LL_LIBS=-lm
 
 ERR=src/errExit.c
 MASTER_SRC=src/master.c
+MASTER2_SRC=src/master2.c
 WORKER_SRC=src/worker.c
 
 OBJS_ERR=$(ERR:.c=.o)

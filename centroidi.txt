@@ -1,0 +1,9 @@
+Messaggio ricevuto centroide.x0: 505.000000
+Messaggio ricevuto centroide.y0: 505.000000
+
+Messaggio ricevuto centroide.x1: 505.000000
+Messaggio ricevuto centroide.y1: 505.000000
+
+Messaggio ricevuto centroide.x2: 505.000000
+Messaggio ricevuto centroide.y2: 505.000000
+
