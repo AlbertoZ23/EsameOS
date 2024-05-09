@@ -17,7 +17,31 @@
 
 #define MAX_NO_IMPROVEMENT 1000
 
+Point *points;
+int shm_id;
+int msg_queue;
+
+void sigterm_handler(int signum) {
+  // Detach from shared memory and message queue
+  // detach from shared memory
+  shmdt(points);
+
+  // delete shared memory
+  shmctl(shm_id, IPC_RMID, NULL);
+
+  // delete message queue
+  msgctl(msg_queue, IPC_RMID, NULL);
+
+  printf("Ctrl-C pressed. Master terminating...\n");
+  fflush(stdout);
+  exit(0);
+}
+
 int main(int argc, char *argv[]) {
+
+  // set signal handler
+  signal(SIGINT, sigterm_handler);
+
   if (argc != 5) {
     printf("Usage: %s <K> <N> <key> <dataset>\n", argv[0]);
     return 1;
@@ -58,8 +82,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Create shared memory segment
-  int shm_id =
-      shmget(key, lines*sizeof(Point) , IPC_CREAT | S_IRUSR | S_IWUSR);
+  shm_id = shmget(key, lines*sizeof(Point) , IPC_CREAT | S_IRUSR | S_IWUSR);
   printf("mem creata, dim memoria è: %li\n",lines*sizeof(Point));
 
   if (shm_id == -1) {
@@ -68,7 +91,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Attach to shared memory segment
-  Point *points = (Point *)shmat(shm_id, NULL, 0);
+  points = (Point *)shmat(shm_id, NULL, 0);
 
   if (points == (Point *)-1) {
     errExit("Error attaching to shared memory segment");
@@ -86,15 +109,15 @@ int main(int argc, char *argv[]) {
     i++;
   }
   fclose(fp);
-
+/*
   // DEBUG - print the dataset
    for (int i = 0; i < lines; i++) {
     printf("%f %f\n", points[i].x, points[i].y);
   }
-
+*/
 
   // create message queue
-  int msg_queue = msgget(key, IPC_CREAT | S_IRUSR | S_IWUSR);
+  msg_queue = msgget(key, IPC_CREAT | S_IRUSR | S_IWUSR);
 
   if (msg_queue == -1) {
     errExit("Error creating message queue");
@@ -102,7 +125,8 @@ int main(int argc, char *argv[]) {
   }
   // to store the pids of the worker processes
   pid_t pids[N];
- printf("----debug albi entrerà nel worker---\n");
+  printf("----debug albi entrera nel worker---\n");
+
   // Generate N child processes called "worker"
   for (int i = 0; i < N; i++) {
     pids[i] = fork();
@@ -116,38 +140,42 @@ int main(int argc, char *argv[]) {
       sprintf(Kstr, "%d", K);
       sprintf(keystr, "%d", key);
       sprintf(linesstr, "%d", lines);
-      if (execl("worker", "worker", keystr, Kstr, linesstr, (char *)NULL) ==
-          -1) {
+      if (execl("worker", "worker", keystr, Kstr, linesstr, (char *)NULL) == -1) {
         errExit("execl failed");
       }
     }
   }
- printf("albi è uscito dal worker");
+ //printf("albi è uscito dal worker");
  
   //===========================================================================
   // IMPLEMENT THE REST OF THE MASTER
 
   // counter for number of messages that did not improve the clustering
   int noImprov = 0;
-  Message mess;
-  size_t mSize = sizeof(Message) - sizeof(long);
-  //double min_variance=100000;
-  Message best_message;
-  best_message.variance=10e30;
+  double min_variance = 1e100;
   // keep receiving messages from workers
-  while (1){
+  while (1) {
     // read a single message
-    msgrcv(msg_queue, &mess, mSize, 0, 0);
-    
-    // stampa messaggio che riceve
-    // update best clustering
-    if(mess.variance<best_message.variance){
-      best_message=mess;
-
-    }else{
-      noImprov=0;
+    Message msg;
+    Centroid b_centroids[K];
+    if (msgrcv(msg_queue, &msg, sizeof(msg) - sizeof(long), 0, 0) ==
+        -1) {  
+      errExit("master: msgrc");
     }
-  //stampa del miglior messaggio
+    //printf("Received message from worker %f\n", msg.msg.variance);
+   
+    // update best clustering (lowest variance)
+    if (msg.msg.variance < min_variance) {
+      min_variance = msg.msg.variance;
+      noImprov = 0;
+      for (int i = 0; i < K; i++) {
+        b_centroids[i].point.x = msg.msg.centroids[i].point.x;
+        b_centroids[i].point.y = msg.msg.centroids[i].point.y;
+      };
+    } else {
+      noImprov++;
+    };
+
     // increment noImprov if the variance did not improve
     
     if (noImprov == MAX_NO_IMPROVEMENT) {
@@ -158,72 +186,39 @@ int main(int argc, char *argv[]) {
       }
       for (int i = 0; i < K; i++) {
         // write the centroid to file
-        
+        fprintf(fp, "%.2lf,%.2lf\n", b_centroids[i].point.x,
+                b_centroids[i].point.y);  // Scrivi le coordinate
+        printf("Finale: %2lf, %2lf\n", b_centroids[i].point.x,b_centroids[i].point.y);
       }
       fclose(fp);
 
       // send SIGINT to all workers
+      for(int i = 0; 1 < N ; i++){
+        kill(pids[i], SIGINT);
+      }
       
       // break out of the loop
       break;
     }
-    noImprov++;
   }
   
-  
-  
-
-  for(int i=0;i<N;i++){
-    kill(pids[i], SIGINT);
-  }
-  
-  //===========================================================================
-
   // gather exit status of all worker processes
   for (int i = 0; i < N; i++) {
     wait(NULL);
   }
 
-  for (int i = 0; i < lines; i++) {
-   printf("%f %f\n", points[i].x, points[i].y);
-  };
-
-
-  
-
-  //FORZA VERONA
-
-  close(STDOUT_FILENO);
-  
-  int fd_file_out = open("centroidi.txt", O_WRONLY | O_TRUNC| O_CREAT, S_IRUSR | S_IWUSR);
-
-  
-
-  for (int i = 0; i < K; i++){
-    printf("Messaggio ricevuto centroide.x%i: %f\n",i, mess.centroids[i].point.x);
-    printf("Messaggio ricevuto centroide.y%i: %f\n\n",i, mess.centroids[i].point.y);
-  }
-
-  //msg.centroids[i].point.y;
-  //msg.centroids[i].cluster_id;
-  // Controlla se l'errore è "la coda di messaggi è vuota"
-  /*if (errno != ENOMSG) {
-      perror("msgrcv");
-      exit(1);
-  }*/
 
   // Detach from shared memory segment
   shmdt(points);
 
   //dealloco shared memory
-  shmctl(shm_id,IPC_RMID,NULL);
+  shmctl(shm_id, IPC_RMID, NULL);
 
   // Deallocate message queue
   msgctl(msg_queue, IPC_RMID, NULL);
 
   
-
-  close(fd_file_out);
   printf("\nmaster:----fine----\n");
+
   return 0;
 }
