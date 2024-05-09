@@ -1,4 +1,5 @@
-//WORKER
+// WORKER
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +15,6 @@
 
 #define convergence_threshold 1e-10
 
-
 // Function to calculate the Euclidean distance between two points
 double euclidean_distance(Point p1, Point p2) {
   double dx = p1.x - p2.x;
@@ -22,15 +22,15 @@ double euclidean_distance(Point p1, Point p2) {
   return sqrt((dx * dx) + (dy * dy));
 }
 
-
 // Function to check if the random centroids are duplicate
 int is_duplicate(Centroid c, Centroid centroids[], int num_centroids) {
-    for (int i = 0; i < num_centroids; i++) {
-        if (c.point.x == centroids[i].point.x && c.point.y == centroids[i].point.y) {
-            return 1; // Duplicato trovato
-        }
+  for (int i = 0; i < num_centroids; i++) {
+    if (c.point.x == centroids[i].point.x &&
+        c.point.y == centroids[i].point.y) {
+      return 1;  // Duplicato trovato
     }
-    return 0; // Nessun duplicato
+  }
+  return 0;  // Nessun duplicato
 }
 
 // Function to update the centroid of a cluster
@@ -54,6 +54,9 @@ double calculateVariance(Point points[], Centroid centroids[], int cluster[],
 }
 
 int main(int argc, char *argv[]) {
+//qui mancava di randomizzare il seme del worker, altrimenti tutti i worker fanno la stessa cosa
+  srand(getpid() + time(NULL));
+
   if (argc != 4) {
     printf("Usage: %s <IPC_key> <K> <P>\n", argv[0]);
     return 1;
@@ -64,7 +67,7 @@ int main(int argc, char *argv[]) {
   int K = atoi(argv[2]);
   int nPoints = atoi(argv[3]);
 
-  //printf("key:%s,k:%s,nPoints:%s\n",argv[1],argv[2],argv[3]);
+  // printf("key:%s,k:%s,nPoints:%s\n",argv[1],argv[2],argv[3]);
 
   int cluster[nPoints];
   // Get shared memory ID
@@ -87,33 +90,32 @@ int main(int argc, char *argv[]) {
     errExit("Error getting message queue ID");
   }
 
-  // se il worker esce con segnale SIGINT per starccare dalla memoria condivisa e uscire con 0
+  // se il worker esce con segnale SIGINT per starccare dalla memoria condivisa
+  // e uscire con 0
 
   Centroid prev_centroids[K];
 
   while (1) {
     // Initialize centroids randomly
-    srand(time(NULL));
     Centroid centroids[K];
 
     for (int i = 0; i < K; i++) {
       Centroid c;
 
-      do{ 
-          int random_index = rand() % nPoints;
-          c.point = points[random_index];
+      do {
+        int random_index = rand() % nPoints;
+        c.point = points[random_index];
 
-      } while(is_duplicate(c,centroids,i));
+      } while (is_duplicate(c, centroids, i));
       centroids[i] = c;
-      prev_centroids[i]=c;
-     
+      prev_centroids[i] = c;
     }
 
-    while (1) {  
+    while (1) {
       // K-means iterations
       // Assign each point to the closest cluster
       for (int i = 0; i < nPoints; i++) {
-        double min_distance = 10e30;
+        double min_distance = DBL_MAX;
         int closest_cluster = 0;
         for (int j = 0; j < K; j++) {
           double d = euclidean_distance(points[i], centroids[j].point);
@@ -144,22 +146,23 @@ int main(int argc, char *argv[]) {
           update_centroid(&centroids[i], sum_point_x, sum_point_y, num_points);
         } else {  // riinizializzo il centroide iesimo se non vi è assegnato
                   // nessun punto
-            Centroid c;     
-            do{
-              int random_index = rand() % nPoints;
-              c.point = points[random_index];
-            }while(is_duplicate(c,centroids,K));
-            centroids[i] = c;
+          Centroid c;
+          do {
+            int random_index = rand() % nPoints;
+            c.point = points[random_index];
+          } while (is_duplicate(c, centroids, K));
+          centroids[i] = c;
         }
       }  // for
 
       // Calculate the difference between new and previous centroids
       double centroid_diff = 0.0;
       for (int i = 0; i < K; i++) {
-        double d = euclidean_distance(centroids[i].point, prev_centroids[i].point);
+        double d =
+            euclidean_distance(centroids[i].point, prev_centroids[i].point);
         centroid_diff += d;
       }
-      printf("worker: albi ha calcolato la variazione dei cluster\n");
+      // printf("worker: albi ha calcolato la variazione dei cluster\n");
 
       // Check for convergence
       if (centroid_diff < convergence_threshold) {
@@ -174,42 +177,41 @@ int main(int argc, char *argv[]) {
         printf("Messaggio ricevuto: %f\n", centroids[i].point.y);ù
         */
       }
-      
 
     }  // while
-    
+
     double variance = calculateVariance(points, centroids, cluster, nPoints);
-    printf("Worker: la varizione di albi ha var\n");
-    
+    // printf("Worker: la varizione di albi ha var\n");
+
     // Create message
     Message msg;
-    msg.mtype=2;
+    //qui veniva inutilmente assegnato il tipo di messaggio
+    //msg.mtype=2;
     msg.msg.variance = variance;
     for (int i = 0; i < K; i++) {
       msg.msg.centroids[i].point.x = centroids[i].point.x;
-      msg.msg.centroids[i].point.y = centroids[i].point.x;
+      //Qui stavi assegnado due volte x invece di y.
+//WRONG:      msg.msg.centroids[i].point.y = centroids[i].point.x;
+      msg.msg.centroids[i].point.y = centroids[i].point.y;
       msg.msg.centroids[i].cluster_id = centroids[i].cluster_id;
     }
 
+    size_t mSize = sizeof(Message) - sizeof(long);
 
-    size_t mSize = sizeof(Message)- sizeof(long);
-    
-    
     // Send message to queue
     if (msgsnd(msgid, &msg, mSize, 0) == -1) {
       errExit("msgsnd");
       return 1;
     }
 
-    //break;
 
   }  // while
 
-  //manca : ripetere finche non si riceve SIGINT o dal master o dall'user
+  // manca : ripetere finche non si riceve SIGINT o dal master o dall'user
 
   // Detach shared memory
   shmdt(points);
 
-  printf("Worker: albi esce dal worker\n");
+  printf("Worker %d: terminating...\n", getpid());
   return 0;
 }
