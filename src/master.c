@@ -1,5 +1,7 @@
-//MASTER
+// MASTER
 
+#include <fcntl.h>
+#include <float.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +13,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <fcntl.h>
+
 #include "Types.h"
 #include "errExit.h"
 
@@ -38,7 +40,6 @@ void sigterm_handler(int signum) {
 }
 
 int main(int argc, char *argv[]) {
-
   // set signal handler
   signal(SIGINT, sigterm_handler);
 
@@ -62,7 +63,7 @@ int main(int argc, char *argv[]) {
     errExit("Error opening dataset file");
     return 1;
   }
-  
+
   // count number of lines in dataset file
   int lines = 0;
   char c;
@@ -71,7 +72,7 @@ int main(int argc, char *argv[]) {
       lines++;
     }
   }
-  printf("num linee: %i\n",lines);
+  printf("num linee: %i\n", lines);
 
   // rewind file pointer to beginning of file
   fseek(fp, 0, SEEK_SET);
@@ -82,8 +83,8 @@ int main(int argc, char *argv[]) {
   }
 
   // Create shared memory segment
-  shm_id = shmget(key, lines*sizeof(Point) , IPC_CREAT | S_IRUSR | S_IWUSR);
-  printf("mem creata, dim memoria è: %li\n",lines*sizeof(Point));
+  shm_id = shmget(key, lines * sizeof(Point), IPC_CREAT | S_IRUSR | S_IWUSR);
+  printf("mem creata, dim memoria è: %li\n", lines * sizeof(Point));
 
   if (shm_id == -1) {
     errExit("Error creating shared memory segment");
@@ -109,12 +110,12 @@ int main(int argc, char *argv[]) {
     i++;
   }
   fclose(fp);
-/*
-  // DEBUG - print the dataset
-   for (int i = 0; i < lines; i++) {
-    printf("%f %f\n", points[i].x, points[i].y);
-  }
-*/
+  /*
+    // DEBUG - print the dataset
+     for (int i = 0; i < lines; i++) {
+      printf("%f %f\n", points[i].x, points[i].y);
+    }
+  */
 
   // create message queue
   msg_queue = msgget(key, IPC_CREAT | S_IRUSR | S_IWUSR);
@@ -140,44 +141,47 @@ int main(int argc, char *argv[]) {
       sprintf(Kstr, "%d", K);
       sprintf(keystr, "%d", key);
       sprintf(linesstr, "%d", lines);
-      if (execl("worker", "worker", keystr, Kstr, linesstr, (char *)NULL) == -1) {
+      if (execl("worker", "worker", keystr, Kstr, linesstr, (char *)NULL) ==
+          -1) {
         errExit("execl failed");
       }
     }
   }
- //printf("albi è uscito dal worker");
- 
+  // printf("albi è uscito dal worker");
+
   //===========================================================================
   // IMPLEMENT THE REST OF THE MASTER
 
   // counter for number of messages that did not improve the clustering
   int noImprov = 0;
-  double min_variance = 1e100;
+  double min_variance = DBL_MAX;
+  //Questa andava dichiarata fuori dal while, se no come fai a tenere trace del miglior clustering?
+  Centroid b_centroids[K];
   // keep receiving messages from workers
   while (1) {
     // read a single message
     Message msg;
-    Centroid b_centroids[K];
-    if (msgrcv(msg_queue, &msg, sizeof(msg) - sizeof(long), 0, 0) ==
-        -1) {  
+    //WRONG: Centroid b_centroids[K];
+    if (msgrcv(msg_queue, &msg, sizeof(msg) - sizeof(long), 0, 0) == -1) {
       errExit("master: msgrc");
     }
-    //printf("Received message from worker %f\n", msg.msg.variance);
-   
+    // printf("Received message from worker %f\n", msg.msg.variance);
+
     // update best clustering (lowest variance)
     if (msg.msg.variance < min_variance) {
+      printf("Current best Variance: %f\n", msg.msg.variance);
       min_variance = msg.msg.variance;
       noImprov = 0;
       for (int i = 0; i < K; i++) {
         b_centroids[i].point.x = msg.msg.centroids[i].point.x;
         b_centroids[i].point.y = msg.msg.centroids[i].point.y;
-      };
+      }
     } else {
       noImprov++;
-    };
+    }
 
     // increment noImprov if the variance did not improve
-    
+
     if (noImprov == MAX_NO_IMPROVEMENT) {
       // dump to file
       FILE *fp = fopen("centroids.csv", "w");
@@ -188,36 +192,36 @@ int main(int argc, char *argv[]) {
         // write the centroid to file
         fprintf(fp, "%.2lf,%.2lf\n", b_centroids[i].point.x,
                 b_centroids[i].point.y);  // Scrivi le coordinate
-        printf("Finale: %2lf, %2lf\n", b_centroids[i].point.x,b_centroids[i].point.y);
+        printf("Finale: %2lf, %2lf\n", b_centroids[i].point.x,
+               b_centroids[i].point.y);
       }
       fclose(fp);
 
       // send SIGINT to all workers
-      for(int i = 0; 1 < N ; i++){
+      // occhio che qui avevi 1 < N invece di i < N
+      for (int i = 0; i < N; i++) {
         kill(pids[i], SIGINT);
       }
-      
+
       // break out of the loop
       break;
     }
   }
-  
+
   // gather exit status of all worker processes
   for (int i = 0; i < N; i++) {
     wait(NULL);
   }
 
-
   // Detach from shared memory segment
   shmdt(points);
 
-  //dealloco shared memory
+  // dealloco shared memory
   shmctl(shm_id, IPC_RMID, NULL);
 
   // Deallocate message queue
   msgctl(msg_queue, IPC_RMID, NULL);
 
-  
   printf("\nmaster:----fine----\n");
 
   return 0;
